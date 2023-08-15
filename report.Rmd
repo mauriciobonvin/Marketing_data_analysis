@@ -1,0 +1,755 @@
+---
+title: "Marketing data set analysis"
+author: Mauricio Bonvin
+date: August 15, 2023 
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+    theme: flatly
+---
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+# Load libraries
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+library(ROSE)
+library(caret)
+library(e1071)
+library(rpart)
+library(rpart.plot)
+library(factoextra)
+knitr::opts_chunk$set(
+    warning = FALSE,
+    message = FALSE,
+    comment = "#>",
+    fig.path = "figs/", # Folder where rendered plots are saved
+    fig.width = 7.252, # Default plot width
+    fig.height = 4, # Default plot height
+    fig.retina = 3 # For better plot resolution
+)
+
+# global settings:
+theme_set(theme_bw(base_size = 20))
+
+# load data
+dataset <- read.csv("data_raw\\marketing_campaign.csv", sep = ";")
+
+```
+
+
+# Information about the data set
+
+This dataset consists of 2.240 customers of supermarket XYZ with data on: Profile of customers, consumer habits, campaign performance and channel preferences. 
+
+This data set was obtained from the Kaggle website. Refer to the following link for the source:
+https://www.kaggle.com/datasets/jackdaoud/marketing-data?resource=download
+
+#	Data dictionary
+
+* AcceptedCmp1 - 1 if customer accepted the offer in the 1st campaign, 0 otherwise. 
+* AcceptedCmp2 - 1 if customer accepted the offer in the 2nd campaign, 0 otherwise. 
+* AcceptedCmp3 - 1 if customer accepted the offer in the 3rd campaign, 0 otherwise. 
+* AcceptedCmp4 - 1 if customer accepted the offer in the 4th campaign, 0 otherwise. 
+* AcceptedCmp5 - 1 if customer accepted the offer in the 5th campaign, 0 otherwise. 
+* Response - 1 if customer accepted the offer in the last campaign, 0 otherwise. 
+* Year_Birth - Birth Year of customer. 
+* DT_Customer – Date of Customers enrollment with the company 
+* Complain - 1 if customer complained in the last 2 years. 
+* Education - customer's level of education. 
+* Marital_Status - customer's marital status. 
+* Kidhome - number of small children in customer's household. 
+* Teenhome - number of teenagers in customer's household. 
+* Income - customer's yearly household income. 
+* MntFishProducts - amount spent on fish products in the last 2 years. 
+* MntMeatProducts - amount spent on meat products in the last 2 years. 
+* MntFruits - amount spent on fruits in the last 2 years. 
+* MntSweetProducts - amount spent on sweet products in the last 2 years. 
+* MntWines - amount spent on wines in the last 2 years. 
+* MntGoldProds - amount spent on gold products in the last 2 years. 
+* NumDealsPurchases - number of purchases made with discount. 
+* NumCatalogPurchases - number of purchases made using catalogue. 
+* NumStorePurchases - number of purchases made directly in stores. 
+* NumWebPurchases - number of purchases made through company's web site. 
+* NumWebVisitsMonth - number of visits to company's web site in the last month. 
+* Recency - number of days since the last purchase. 
+
+# Task description
+
+The supermarket XYZ wants to understand the impact of the marketing campaigns they were performing and optimize the selection of best campaigns. In this direction, they want to predict if the customer will accept the following campaign or not, in order to save money spent on non-profitable marketing actions. 
+
+Also, the supermarket wants to better understand their customers in order to address their needs and offer relevant products for each of them. To really understand the customers, a precise profiling of each customer segment must be performed. Additionally, the management wants to derive some insights regarding customer’s segments consumption habits.
+
+# Exploratory analysis of the dataset
+
+Example of what data looks like:
+```{r}
+head(dataset) 
+```
+## Data types
+
+Mostly int(integer), there are 3 variables that are chr(character), two correspond to categories and one to date.
+```{r}
+str(dataset) 
+```
+## Data statistics
+
+Check for NA values:
+
+* Only variable Income has 24 NA values, they can be removed without impacting the data base as it is a 1%.
+
+Check for outliers: 
+
+* Year_Birth: the min is 1893 which to current day is 130 years, it my be a wrong input.
+* Income: has a max of 666.666 while median is 51382. It is an outlier that can be removed.
+* MntWines and MntMeatProducts have quite large numbers as max, that may be pulling the mean up. The outliers can be removed.
+* Variables Z_CostContact and Z_Revenue only have 1 value, they are do not provide any information and will be dropped.
+```{r}
+summary(dataset) 
+```
+# Visualize data
+
+## Visualize bar plots
+
+* Some categories of Marital status can be packed together.
+* Some categories of Education can be packed together.
+* MntWines, MntFruits, MntMeatProducts, MntFishProducts, MntSweetProducts, MntGoldProds have long tail distribution.
+* AcceptedCmp1, AcceptedCmp2, AcceptedCmp3, AcceptedCmp4, AcceptedCmp5, Complain, Response have majority of values 0.
+* Z Cost_contact and Z_revenue add no information and will be removed. ID will also be removed.
+```{r}
+column_names <- names(dataset)
+
+bar_plots_list <- list()
+
+# Iterate over each column and create a barplot using ggplot
+for (col in column_names) {
+  p <- ggplot(dataset, aes(x = .data[[col]])) +
+    geom_bar() +
+    labs(title = paste("Barplot of", col))
+  
+   bar_plots_list[[col]] <- p
+}
+# Print bar plots
+for (col in column_names) {
+  print(bar_plots_list[[col]])
+}
+
+```
+
+## Visualize box plots
+
+* Year_Birth has bottom outliers.
+* Income has upper outliers.
+* MntWines, MntFruits, MntMeatProducts, MntFishProducts, MntSweetProducts, MntGoldProds review if there are outliers due to skewed distribution.
+
+```{r}
+box_plots_list <- list()
+
+# Iterate over each column and create a barplot using ggplot
+for (col in column_names) {
+  p <- ggplot(dataset, aes(y = .data[[col]])) +
+    geom_boxplot() +
+    labs(title = paste("Boxplot of", col))
+  
+   box_plots_list[[col]] <- p
+}
+# Print bar plots
+for (col in column_names) {
+  print(box_plots_list[[col]])
+}
+```
+
+# Preprocessing 
+
+The first step is removing the outliers using Interquartile Range for the following variables:
+
+•	“Year_Birth”, there were customers with more than 125 years old.
+•	“Income” there are some very high income values.
+
+The second step is encoding some of the categorical variables to include in the model:
+
+•	“Marital_Status” attribute, can be narrow the categories into two: 0:Single or 1: Together.
+•	The “Education” attribute consists of the following values 2n Cycle, Basic, Graduation, Master and PhD. We decided to recode them to following 3 groups: Basic (0), Graduation (1), 2n Cycle, Master and PhD (2). With this recoding we now can better track and order these education grades (0,1,2). 
+
+The third step is removing variables that will not be used:
+
+* Removed variables i..ID, Dt_Customer, Z_Cost_contact and Z_revenue that add no information and we will not use.
+
+```{r}
+#Remove outliers
+# Year_birth
+tquantile <- quantile(dataset$Year_Birth, probs=c(.25, .75), na.rm = FALSE) 
+tiqr<- IQR(dataset$Year_Birth)                                    
+tlower <- tquantile[1] - 1.5*tiqr                                     
+tupper <- tquantile[2] + 1.5*tiqr                     
+ds2<- subset(dataset, dataset$Year_Birth > tlower & dataset$Year_Birth <tupper)
+
+# Income
+ds2$Income <- gsub('.{3}$', '', as.character(ds2$Income))
+ds2$Income <- gsub('[[:punct:]]', '', as.character(ds2$Income))
+ds2$Income <- as.numeric(ds2$Income)
+
+tquantile <- quantile(ds2$Income, probs=c(.25, .75), na.rm = TRUE) 
+tiqr<- IQR(ds2$Income, na.rm=TRUE)                                    
+tlower <- tquantile[1] - 1.5*tiqr                                     
+tupper <- tquantile[2] + 1.5*tiqr                     
+ds2<- subset(ds2, ds2$Income > tlower & ds2$Income <tupper)
+
+# Recoding
+#Marital status
+ds2$Marital_Status<- recode(ds2$Marital_Status, Divorced = 0, Alone = 0, YOLO = 0, Absurd = 0, Divorced = 0, Single = 0, Widow = 0, Married = 1, Together = 1)
+#Education
+ds2$Education<- recode(ds2$Education, "2n Cycle" = 2, Basic = 0, Graduation = 1, Master= 2, PhD = 2)
+
+## Remove variables ï..ID, Dt_Customer, Z_CostContact, Z_Revenue
+ds3 <- select(ds2, -c(ï..ID, Dt_Customer, Z_CostContact, Z_Revenue))
+
+summary(ds3)
+```
+## Correlation
+
+It is interesting to see the covariance matrix as we can identify some high positive correlations regarding variable “income” and “MntWines”, “MntMeatProducts", “NumCatalogPurchases”,”NumStorePurchases” and some high negative correlations regarding income and “Kidhome” and “NumWebVisitsMonth”. 
+```{r}
+res <- cor(ds3)
+
+corrplot(res, method="number", title= "Correlation matrix",
+         tl.cex = 0.7, tl.srt = 45, tl.col = "black",
+         cl.cex = 0.8, cl.ratio = 0.2, cl.align = "r",
+         addCoef.col = "black", number.digits = 2,number.cex = 0.5, 
+         mar = c(0, 0, 2, 0))
+
+```
+
+## Scatter plots
+
+Take a look at some scatter plots related to income and other variables.
+
+* The higher the education, higher the income.
+* The lower the income there are more the kids in a home.
+* There seems to be a positive relationship between income and amount spent in Wines, Fruits, Mean, Fish, Sweets and Gold. The more the income the more amount they purchase.
+* There seems to be a positive relationship between income and Number of web, catalog and store purchases. The more the income the more number of purchases. But there is a negative relationship between income and number of web visits per month. The more the income the lower the visits to the web page.
+
+```{r}
+##Scatter plots
+
+column_names_2 <- names(ds3)
+
+scatter_plots_list <- list()
+
+# Iterate over each column and create a scatter using ggplot
+for (col in column_names_2) {
+  p <- ggplot(ds3, aes(x = .data[[col]], y = Income)) +
+    geom_point() +
+    labs(title = paste("Scatter plot of Income vs", col))
+  
+   scatter_plots_list[[col]] <- p
+}
+# Print scatter plots
+for (col in column_names_2) {
+  print(scatter_plots_list[[col]])
+}
+```
+
+# Classification
+
+## Split of dataset
+
+For training the model we prepare the data. This will be done in the next following steps:
+
+1. Set a seed, this value will be set to 123, then divide the data set into a training and test set, 70% of data for training, and 30% for testing. Done randomly without replacement using indexes.
+
+```{r}
+###Divide train & test
+
+set.seed(123)  # For reproducibility
+
+# Generate indices for train and test sets
+train_indices <- sample(seq_len(nrow(ds3)), size = floor(0.7 * nrow(ds3)), replace = FALSE)
+test_indices <- setdiff(seq_len(nrow(ds3)), train_indices)
+
+# Create train and test datasets
+train <- ds3[train_indices, ]
+test <- ds3[test_indices, ]
+```
+2. Check if the response variable is unbalanced. They are, 85% are value 0 while 15% are value 1. 
+```{r}
+#proportion of response variable
+prop.table(table(train$Response))*100 # display the ratio
+```
+An oversampling is applied to balance classes to approximately 50% for each class.
+```{r}
+train_balanced <- ovun.sample(Response ~ ., data = train, method = "over")$data
+prop.table(table(train_balanced$Response))*100 # display the ratio
+```
+
+# Modelling
+
+## Naive Bayes classifier
+
+When running Naive Bayes classifier it was obtained an accuracy of 76%, 57% Recall and 35% Precision.
+```{r}
+nb_model <- naiveBayes(Response ~ ., data = train_balanced)
+predictions <- predict(nb_model, newdata = test, type = "class")
+
+cm_nb <- confusionMatrix(predictions, factor(test$Response), positive = "1")
+
+print(cm_nb)
+```
+
+## Logistic regression model
+
+When looking at the confusion matrix it can be observed an 80% accuracy, 77% Recall
+and 43% Precision. It is a bit better than the model with Naive Bayes.
+
+Some of the most important variables are: Recency, StorePurchases, Marital Status, Education.
+```{r}
+#fit logistic regression model
+
+#disable scientific notation for model summary
+options(scipen=999)
+
+model <- glm(Response ~.,family="binomial", data=train_balanced)
+
+#view model summary
+summary(model)
+
+probabilities <- model %>% predict(test, type = "response")
+predicted_classes <- ifelse(probabilities > 0.5, "1", "0")
+
+cm_lr1 <-confusionMatrix(as.factor(predicted_classes),as.factor(test$Response), positive = "1")
+
+print(cm_lr1)
+
+
+# 80% accuracy
+# 77% Recall
+# 43% Precision
+# 55% F1
+
+#Variable importance
+
+vlr <- varImp(model)
+VI_lr<- data.frame(var=names(train_balanced[,-25]), imp=vlr)
+
+VI_plot_lr <- VI_lr[order(VI_lr$Overall,decreasing=FALSE),]
+barplot(VI_plot_lr$Overall,
+        names.arg=rownames(VI_plot_lr),
+        horiz=TRUE,
+        col='steelblue',
+        xlab='Variable Importance',
+        main="Variable importance logistic regression",
+        las = 2,
+        cex.names = 0.65)
+```
+
+## Principal Component Analysis (PCA)
+
+It was observed in the covariance matrix that we had many highly correlated variables, thus we proceed to apply a Principal Component Analysis. This technique will allow to reduce the dimensionality of the data while capturing the most important patterns.
+```{r}
+###PCA
+
+d_pca<- prcomp(train_balanced, center = TRUE,scale. = TRUE)
+
+pca_var<- d_pca$sdev^2
+
+pve <- pca_var/sum(pca_var)
+```
+The variability explain by the variables can be observed in the accumulated sum graph. The 80% of the variablity is explained by the first 12 variables. Those would be used to model the logistic regression.
+```{r}
+plot(cumsum(pve), xlab="Principal Component",
+     ylab="Proportion of variation explained",
+     ylim=c(0,1),
+     type="b",
+     main= "CUMSUM Scree Plot",
+    )
+abline(h=0.8, col="red")
+
+pcadata <- data.frame(Response = train_balanced[,"Response"],d_pca$x[,1:12])
+
+```
+
+### Logistic regression after PCA
+
+After applying PCA to the train data set, the logistic regression was run again and obtained an accuracy of 96.8% for this model.Also, 97% Recall and 84% Precision.
+
+This model seems good, but has the problem that it is not an explicative model as we cannot interpret the created variables with PCA. Then it should be considered obtaining an explainable model also, as it is relevant to explain which variables are the most important.
+```{r}
+
+model3<- glm(Response ~. ,family="binomial", data=pcadata)
+
+#view model summary
+
+summary(model3)
+
+# preprocess the test data as it was done with train applying pca
+test.p <- predict(d_pca, newdata = test[,1:25])
+
+predict_pca <- predict(model3, newdata=data.frame(test.p[,1:12]), type="response")
+
+predicted_classes3 <- factor(ifelse(predict_pca >= 0.5, "1", "0"))
+
+#confusion matrix
+
+cm_pca <- confusionMatrix(as.factor(predicted_classes3),as.factor(test$Response), positive = "1")
+
+print(cm_pca)
+# 96.8% accuracy
+
+# 97% Recall
+# 84% Precision
+# 90% F1
+```
+
+## Decision tree
+
+Decision tree model provides 81% accuracy, 43% Precision and 62% Recall.
+
+Some of the most important variables are: MntMeatProducts, MntGoldProds, Income, MntWines, NumCatalagPurchases.
+
+```{r}
+tree_over <- rpart(Response ~ ., data = train_balanced ,method = 'class')
+rpart.plot(tree_over, extra = 106)
+pred_tree_over <- predict(tree_over, newdata = test, type="class")
+
+#Confusion matrix
+
+cm_dt<-confusionMatrix(pred_tree_over, as.factor(test$Response), positive = "1")
+
+print(cm_dt)
+#variable importance
+vtree <- varImp(tree_over)
+
+VI_dt<- data.frame(var=names(train_balanced[,-9]), imp=vtree)
+
+VI_plot_dt <- VI_dt[order(VI_dt$Overall, decreasing=FALSE),]
+par(mar = c(2, 10, 4, 2) + 0.1)
+barplot(VI_plot_dt$Overall,
+        names.arg=rownames(VI_plot_dt),
+        horiz=TRUE,
+        las = 1,
+        col='steelblue',
+        xlab='Variable Importance',
+        main="Variable importance of the Decision Tree",
+        las = 2,
+        cex.names = 0.65)
+```
+
+## Random forest
+
+Random Forest model provides 88% accuracy, 76% Precision and 40% Recall.
+
+Some of the most important variables are: Recency, MntGoldProds, MntMeatProducts, MntWines, NumStorePurchases.
+
+```{r}
+rf_default <- train(as.factor(Response)~.,data = train_balanced, method = "rf", metric = "Accuracy", importance=TRUE)
+
+
+#predict
+p1 <- predict(rf_default, test)
+
+#accuracy
+
+cm_rf <-confusionMatrix(p1, as.factor(test$Response), positive ="1")
+print(cm_rf)
+#variable importance
+
+imp_rf <- varImp(rf_default)
+VI_rf<- data.frame(var=names(train_balanced[,-25]), imp=imp_rf$importance)
+VI_rf[,2] <- NULL
+
+VI_plot_rf <- VI_rf[order(VI_rf$imp.1, decreasing= FALSE),]
+par(mar = c(2, 10, 4, 2) + 0.1)
+barplot(VI_plot_rf$imp.1,
+        names.arg=rownames(VI_plot_rf),
+        horiz=TRUE,
+        las = 1,
+        col='steelblue',
+        xlab='Variable Importance',
+        main="Variable importance of the Random Forest",
+         las = 2,
+        cex.names = 0.65)
+```
+
+## Linear Discriminant Analysis  (LDA)
+
+Linear Discriminant Analysis model provides 81% accuracy, 44% Precision and 76% Recall.
+
+Some of the most important variables are: AcceptedCmp5, MntMeatProducts, MntWines, NumCatalogPurchases, AcceptedCmp1, Recency.
+
+```{r}
+lda <- train(as.factor(Response) ~ .,method="lda", data = train_balanced)
+
+pred_lda <- predict(lda, test)
+
+#confusion matrix
+
+cm_lda <- confusionMatrix(as.factor(pred_lda), as.factor(test$Response), positive="1")
+print(cm_lda)
+
+#Variable importance
+
+vida <- varImp(lda)
+
+VI_lda<- data.frame(var=names(train_balanced[,-25]), imp=vida$importance)
+
+VI_plot_lda <- VI_lda[order(VI_lda$Overall, decreasing=FALSE),]
+par(mar = c(2, 10, 4, 2) + 0.1)
+barplot(VI_plot_lda$Overall,
+        names.arg=rownames(VI_plot_lda),
+        horiz=TRUE,
+        las = 1,
+        col='steelblue',
+        xlab='Variable Importance',
+        main="Variable Importance LDA",
+        las = 2,
+        cex.names = 0.65)
+```
+
+# Metrics comparison
+
+It can be seen that the best model is the logistic regression after PCA with 96.8% accuracy, 97% Recall and 84% Precision. As we intend to classify an unbalanced data set where the positive class is important, the precision is a valuable metric to use. 
+
+```{r}
+comparecm<-cbind(cm_nb$byClass,cm_lr1$byClass,cm_pca$byClass,cm_dt$byClass,cm_rf$byClass, cm_lda$byClass)
+comparecm2<-cbind(cm_nb$overall["Accuracy"],cm_lr1$overall["Accuracy"],cm_pca$overall["Accuracy"],cm_dt$overall["Accuracy"],cm_rf$overall["Accuracy"], cm_lda$overall["Accuracy"])
+comparison <- data.frame(rbind(comparecm2,comparecm))
+colnames(comparison) <- c("Naive Bayes", "Logistic Regression","Logistic Regression after PCA", "Decision Tree", "Random Forest", "LDA")
+print(comparison)
+```
+## Important variables
+
+Regarding variable importance, the following table contains the most important variables considered by each model to predict the acceptance of a campaign or not.
+
+The threshold to count it as important is if the model assigned a weight of at least the 50% of the highest weight. 
+
+The important variables that repeat the most are “Recency”,“MntMeatProducts”, “MntWines”. 
+
+Other important variables are "Income",“Education”, “Marital_Status”, "Teenhome", "NumCatalogPurchases", "NumStorePurchases", "NumWebVisitsMonth", "AcceptedCmp3", "AcceptedCmp5".
+
+```{r}
+variables <- cbind( vlr,vtree, imp_rf$importance["0"], vida$importance)
+names(variables) <- c('Decision tree', 'Logistic regression', 'Random forest','LDA')
+
+result_list <- list()
+
+for (col_name in colnames(variables)) {
+  col_idx <- which(colnames(variables) == col_name)
+  max_value <- max(variables[, col_idx])
+  threshold <- 0.5 * max_value
+  rows_above_threshold <- rownames(variables)[variables[, col_idx] >= threshold]
+  result_list[[col_name]] <- rows_above_threshold
+}
+
+important_variables <- unlist(result_list)
+variable_counts <- table(important_variables)
+
+sorted_variable_counts <- sort(variable_counts, decreasing = TRUE)
+
+print(sorted_variable_counts)
+
+```
+## Summary
+
+Running a PCA previous to a logistic regression provided a massive result with an accuracy of 96.8%, 97% Recall and 84% Precision. Yet, this model has a disadvantage that we cannot identify which variables are the most important to predict the acceptance of a campaign or not. This knowledge may be crucial for the marketing department, thus, we run other models (decision tree, random forest and LDA) to obtain the variable importance and compare them to obtain better insights. The most important variables are “Recency”,“MntMeatProducts”, “MntWines”.
+
+Then, the logistic regression after PCA model should be used to predict the acceptance of a campaign but the variable importance information could be also used for marketing purposes.
+
+# Customer segmentation
+
+Created some aggregated variables: 
+
+* ¨Variable “Age” after “Year_Birth”, 
+* ¨Variable “have_kids” combining “kidhome” and “teenhome”. 
+* ¨Variable “total_amount_spent” combining variables “MntWines”, “MntFruits” ,“MntMeatProducts”, “MntSweetProducts”, “MntFishProducts”, “MntGoldProds”. 
+* ¨Variable “quantity_of_purchases” combining variables “NumCatalogPurchases”, ”NumStorePurchases”, ”NumWebPurchases”.
+
+```{r}
+#for this task we will disregard the campaign acceptance and focus on customer data and consuming habbits.
+
+ds4 <- select(ds3, -c(AcceptedCmp3,AcceptedCmp1, AcceptedCmp2, AcceptedCmp4, AcceptedCmp5, Complain, Response))
+
+#we proceed to transform some of the variables for a more comprehensive analysis.
+
+#Age as of 2023
+
+ds4$age <- 2023 - ds4$Year_Birth
+
+# Divide age in categories. The values were chosen arbitrarily.
+
+ds4$category_age <- ifelse(ds4$age<=45,"Young",ifelse(ds4$age>=63,"Old","Adults"))
+
+#How many kids have a client in total and a dummy variable if has kids or not
+ds4$quantity_of_kids <- ds4$Kidhome+ds4$Teenhome
+ds4$have_kids <- ifelse(ds4$quantity_of_kids>0,1,0)
+
+#Total amount spent by each client
+ds4$total_amount_spent <- ds4$MntWines+ds4$MntFruits+ds4$MntMeatProducts+ds4$MntFishProducts+ds4$MntSweetProducts+ds4$MntGoldProds
+
+#How many purchases make each client
+ds4$quantity_of_purchases <- ds4$NumWebPurchases+ds4$NumCatalogPurchases+ds4$NumStorePurchases
+
+#We will drop some variables we used to transform data
+
+ds4 <- select(ds4, -c(Year_Birth, Kidhome, Teenhome))
+
+summary(ds4)
+```
+## Analysis of new variables
+
+### Total amount spent vs demographics
+
+* Individuals without kids spend more.
+* Individuals that are graduated or have masters+ spend more than individuals with basic education.
+* Individuals that are older spend more than the younger ones.
+* Individuals with higher income spend more.
+```{r}
+ggplot(ds4, aes(y= total_amount_spent, x= as.factor(have_kids), group = have_kids, fill = as.factor(have_kids)))+geom_boxplot() #no kids, more spent
+ggplot(ds4, aes(y= total_amount_spent, x= as.factor(Marital_Status), group = Marital_Status, fill = as.factor(Marital_Status)))+geom_boxplot() #no effect
+ggplot(ds4, aes(y= total_amount_spent, x= as.factor(Education), group = Education, fill = as.factor(Education)))+geom_boxplot()#Graduated and phd spent more than non graduate ones
+ggplot(ds4, aes(y= total_amount_spent, x= category_age, group = category_age, fill = category_age))+geom_boxplot()#The older the more they spent
+ggplot(ds4, aes(y= total_amount_spent, x= Income, group = Income, fill = Income))+geom_boxplot()#The higher the income the more they spent
+
+```
+
+### Quantity of purchases vs demnographics
+
+* Individuals without kids purchased more times.
+* Individuals that are graduated or have masters+ purchased more times than individuals with basic education.
+* Individuals that are older purchased more times than the younger ones.
+* Individuals with higher income purchased more times.
+```{r}
+ggplot(ds4, aes(y= quantity_of_purchases, x= as.factor(have_kids), group = have_kids, fill = as.factor(have_kids)))+geom_boxplot() #no kids, purchased more times.
+ggplot(ds4, aes(y= quantity_of_purchases, x= as.factor(Marital_Status), group = Marital_Status, fill = as.factor(Marital_Status)))+geom_boxplot() #no effect
+ggplot(ds4, aes(y= quantity_of_purchases, x= as.factor(Education), group = Education, fill = as.factor(Education)))+geom_boxplot()#Graduated and phd spent more than non graduate ones
+ggplot(ds4, aes(y= quantity_of_purchases, x= category_age, group = category_age, fill = category_age))+geom_boxplot()#The older the more times they purchase
+ggplot(ds4, aes(y= quantity_of_purchases, x= Income, group = Income, fill = Income))+geom_boxplot()#The higher the income the more times they purchase
+
+```
+
+After the analysis it was decided to cluster based on total amount spent and quantity of purchases and 
+use demographic information of clients to build the profiling of the clusters.
+
+## Clustering K-means
+
+```{r}
+ds5 <- select(ds4, c(total_amount_spent, quantity_of_purchases))
+ds4$category_age<-sapply(as.factor(ds4$category_age), unclass)
+```
+
+### Elbow method
+
+The elbow method suggest 2 to 3 clusters.
+```{r}
+fviz_nbclust(ds5, kmeans, method = "wss") 
+```
+
+### Silhouette
+
+The silhouette method also suggest 2 to 3 clusters.
+
+```{r}
+fviz_nbclust(ds5, kmeans, method = "silhouette")
+```
+### Clustering
+
+```{r}
+km <- kmeans(ds5, centers = 3)
+#visualize clusters
+fviz_cluster(km, data = ds5, xlab="Total Amount Spent", ylab = "Quantity of Purchases",) +
+  theme(plot.title = element_text(hjust = 0.5, size = 16))
+```
+Mean values of each variable for each cluster
+
+```{r}
+#add column to dataset
+ds4$kmean <- km$cluster
+#cluster characterization
+aggregate(ds4,list(ds4$kmean),mean)
+```
+
+Barplot: individuals per cluster
+
+```{r}
+#barplot
+ggplot(ds4, aes( x=factor(kmean)))+ geom_bar() + labs(title = "Distribution of Clusters") + xlab("k-mean") +
+scale_x_discrete(labels=c("3" = "Low spenders", "1" = "Mid spenders", "2" = "High spenders"))+ theme(plot.title = element_text(hjust = 0.5, size = 16))
+```
+
+### Cluster characterization
+
+Run the method k-means and decided for 3 clusters that are here characterized.
+
+1. Cluster 3: "Low spenders" - This group has the lower income (~37k) and tend to have more than one kid, spend the least in all the categories and tend to chase deal purchases and visit the most often the website. Performed low quantities of purchases using normally the store or web but not really the Catalog.
+
+2. Cluster 1: "Mid spenders" -This group has medium income (~65k) and tend to have one kid, spend a good amount in all the categories and tend to chase deal purchases and visit the website often. Performed high quantities of purchases using all the channels but with a preference for store purchases.
+
+3. Cluster 2: "high spenders" - This group has the higher income (~77k) and normally have no kids, spent the most in all the categories, do not chase deal purchases and do not visit often the website. Performed high quantities of purchases using all the channels but with a preference for store purchases.
+
+
+## Linear regression
+
+For the Linear Regression kept the same clusters and compared how much every Cluster spent in relation to the total amount spent. For the “Low Spenders” it was 15%, the “Mid Spenders” had 41% and the “High Spenders” spent 44%  of the overall expenditure. 
+
+```{r}
+clust_mid <- filter(ds4, ds4$kmean == 1)
+clust_high <- filter(ds4, ds4$kmean == 2)
+clust_low <- filter(ds4, ds4$kmean == 3)
+
+a<-sum(clust_low$total_amount_spent) #190.393
+b<-sum(clust_mid$total_amount_spent) #553.802
+c<-sum(clust_high$total_amount_spent) #591.065
+d<-a+b+c
+
+#porcentages of total amount spent by cluster
+#15% cluster_low
+#41% cluster_mid
+ #44% cluster_high
+```
+
+### Cluster Low Spenders
+
+Education, kids and deal purchases reduce the total amount spent for the “Low Spenders”. On the other hand, Income and purchases through all the channels and visits on the website increase the total amount spent.
+
+```{r}
+model_clust_low <- lm(total_amount_spent~Education+Income+Marital_Status+have_kids+age+
+                   Recency+NumDealsPurchases+NumWebPurchases+NumCatalogPurchases+NumStorePurchases+NumWebVisitsMonth,
+                   data=clust_low)
+
+#keep only significant variables
+
+model_clust_low_2 <-lm(total_amount_spent~Education+Income+have_kids+           NumDealsPurchases+NumWebPurchases+NumCatalogPurchases+NumStorePurchases+NumWebVisitsMonth, data=clust_low)
+summary(model_clust_low_2)
+```
+
+### CLuster Mid Spenders
+
+For the “Mid Spenders” the number of catalog and store purchases are important as well as number of web visits per month. Kids produce a negative effect on the amount spent, while income has a positive effect. 
+
+```{r}
+model_clust_mid <- lm(total_amount_spent~Education+Income+Marital_Status+have_kids+age+
+                    Recency+NumDealsPurchases+NumWebPurchases+NumCatalogPurchases+NumStorePurchases+NumWebVisitsMonth,
+                   data=clust_mid)
+
+
+#keep only significant variables
+
+model_clust_mid_2 <-lm(total_amount_spent~Income+have_kids+NumCatalogPurchases+NumStorePurchases+NumWebVisitsMonth, 
+                    data=clust_mid)
+summary(model_clust_mid_2)
+```
+
+### Cluster High Spenders
+
+In case of the “High Spenders”, education and income increase the amount spent significantly as well as the number of web visits per month. Because this group has the least web visits per month and they contribute much to the amount spent, finding a way to increase the web visits would be a good way to encourage them to spend more money.
+```{r}
+model_clust_high <- lm(total_amount_spent~Education+Income+Marital_Status+have_kids+age+Recency+NumDealsPurchases+
+                     NumWebPurchases+NumCatalogPurchases+NumStorePurchases+NumWebVisitsMonth, data=clust_high)
+
+#keep only significant variables
+
+model_clust_high_2 <-lm(total_amount_spent~Education+Income+have_kids+NumWebVisitsMonth, data=clust_high)
+summary(model_clust_high_2)
+```
+
