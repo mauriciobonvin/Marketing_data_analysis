@@ -21,6 +21,7 @@ library(e1071)
 library(rpart)
 library(rpart.plot)
 library(factoextra)
+library(gridExtra)
 knitr::opts_chunk$set(
     warning = FALSE,
     message = FALSE,
@@ -44,7 +45,7 @@ dataset <- read.csv("data_raw\\marketing_campaign.csv", sep = ";")
 
 This dataset consists of 2.240 customers of supermarket XYZ with data on: Profile of customers, consumer habits, campaign performance and channel preferences. 
 
-This data set was obtained from the Kaggle website. Refer to the following link for the source:
+It was obtained from the Kaggle website. Refer to the following link for the source:
 https://www.kaggle.com/datasets/jackdaoud/marketing-data?resource=download
 
 #	Data dictionary
@@ -105,9 +106,11 @@ Check for outliers:
 * Year_Birth: the min is 1893 which to current day is 130 years, it my be a wrong input.
 * Income: has a max of 666.666 while median is 51382. It is an outlier that can be removed.
 * MntWines and MntMeatProducts have quite large numbers as max, that may be pulling the mean up. The outliers can be removed.
-* Variables Z_CostContact and Z_Revenue only have 1 value, they are do not provide any information and will be dropped.
+* Variables Z_CostContact and Z_Revenue only have 1 value, they are do not provide any information and will be dropped. Also, variables i..ID and Dt_Customer will be dropped.
 ```{r}
 summary(dataset) 
+
+ds2 <- select(dataset, -c(ï..ID, Dt_Customer, Z_CostContact, Z_Revenue))
 ```
 # Visualize data
 
@@ -117,25 +120,29 @@ summary(dataset)
 * Some categories of Education can be packed together.
 * MntWines, MntFruits, MntMeatProducts, MntFishProducts, MntSweetProducts, MntGoldProds have long tail distribution.
 * AcceptedCmp1, AcceptedCmp2, AcceptedCmp3, AcceptedCmp4, AcceptedCmp5, Complain, Response have majority of values 0.
-* Z Cost_contact and Z_revenue add no information and will be removed. ID will also be removed.
+
 ```{r}
-column_names <- names(dataset)
+column_names <- names(ds2)
 
 bar_plots_list <- list()
 
 # Iterate over each column and create a barplot using ggplot
 for (col in column_names) {
-  p <- ggplot(dataset, aes(x = .data[[col]])) +
+  p <- ggplot(ds2, aes(x = .data[[col]])) +
     geom_bar() +
-    labs(title = paste("Barplot of", col))
+    labs(title = col)
   
    bar_plots_list[[col]] <- p
 }
-# Print bar plots
-for (col in column_names) {
-  print(bar_plots_list[[col]])
-}
 
+num_cols_per_page <- 2
+num_plots <- length(column_names)
+
+for (i in seq(1, num_plots, by = num_cols_per_page)) {
+  end <- min(i + num_cols_per_page - 1, num_plots)
+  plots_subset <- bar_plots_list[i:end]
+  grid.arrange(grobs = plots_subset, ncol = num_cols_per_page)
+}
 ```
 
 ## Visualize box plots
@@ -145,19 +152,25 @@ for (col in column_names) {
 * MntWines, MntFruits, MntMeatProducts, MntFishProducts, MntSweetProducts, MntGoldProds review if there are outliers due to skewed distribution.
 
 ```{r}
+
+column_names_box_plot <- c("Year_Birth","Income","Recency","MntWines","MntFruits","MntMeatProducts", "MntFishProducts", "MntSweetProducts", "MntGoldProds", "NumDealsPurchases","NumWebPurchases","NumCatalogPurchases","NumStorePurchases","NumWebVisitsMonth")
 box_plots_list <- list()
 
 # Iterate over each column and create a barplot using ggplot
-for (col in column_names) {
-  p <- ggplot(dataset, aes(y = .data[[col]])) +
+for (col in column_names_box_plot) {
+  p <- ggplot(ds2, aes(y = .data[[col]])) +
     geom_boxplot() +
-    labs(title = paste("Boxplot of", col))
+    labs(title = col)
   
    box_plots_list[[col]] <- p
 }
-# Print bar plots
-for (col in column_names) {
-  print(box_plots_list[[col]])
+
+num_plots_box <- length(column_names_box_plot)
+
+for (i in seq(1, num_plots_box, by = num_cols_per_page)) {
+  end <- min(i + num_cols_per_page - 1, num_plots_box)
+  plots_subset <- box_plots_list[i:end]
+  grid.arrange(grobs = plots_subset, ncol = num_cols_per_page)
 }
 ```
 
@@ -173,18 +186,14 @@ The second step is encoding some of the categorical variables to include in the 
 •	“Marital_Status” attribute, can be narrow the categories into two: 0:Single or 1: Together.
 •	The “Education” attribute consists of the following values 2n Cycle, Basic, Graduation, Master and PhD. We decided to recode them to following 3 groups: Basic (0), Graduation (1), 2n Cycle, Master and PhD (2). With this recoding we now can better track and order these education grades (0,1,2). 
 
-The third step is removing variables that will not be used:
-
-* Removed variables i..ID, Dt_Customer, Z_Cost_contact and Z_revenue that add no information and we will not use.
-
 ```{r}
 #Remove outliers
 # Year_birth
-tquantile <- quantile(dataset$Year_Birth, probs=c(.25, .75), na.rm = FALSE) 
-tiqr<- IQR(dataset$Year_Birth)                                    
+tquantile <- quantile(ds2$Year_Birth, probs=c(.25, .75), na.rm = FALSE) 
+tiqr<- IQR(ds2$Year_Birth)                                    
 tlower <- tquantile[1] - 1.5*tiqr                                     
 tupper <- tquantile[2] + 1.5*tiqr                     
-ds2<- subset(dataset, dataset$Year_Birth > tlower & dataset$Year_Birth <tupper)
+ds2<- subset(ds2, ds2$Year_Birth > tlower & ds2$Year_Birth <tupper)
 
 # Income
 ds2$Income <- gsub('.{3}$', '', as.character(ds2$Income))
@@ -203,8 +212,7 @@ ds2$Marital_Status<- recode(ds2$Marital_Status, Divorced = 0, Alone = 0, YOLO = 
 #Education
 ds2$Education<- recode(ds2$Education, "2n Cycle" = 2, Basic = 0, Graduation = 1, Master= 2, PhD = 2)
 
-## Remove variables ï..ID, Dt_Customer, Z_CostContact, Z_Revenue
-ds3 <- select(ds2, -c(ï..ID, Dt_Customer, Z_CostContact, Z_Revenue))
+ds3 <- ds2
 
 summary(ds3)
 ```
@@ -226,29 +234,32 @@ corrplot(res, method="number", title= "Correlation matrix",
 
 Take a look at some scatter plots related to income and other variables.
 
-* The higher the education, higher the income.
-* The lower the income there are more the kids in a home.
-* There seems to be a positive relationship between income and amount spent in Wines, Fruits, Mean, Fish, Sweets and Gold. The more the income the more amount they purchase.
+* The higher the education, the higher the income.
+* The lower the income the more the kids in a home.
+* There seems to be a positive relationship between income and amount spent in Wines, Fruits, Mean, Fish, Sweets and Gold. The more the income the greater amount they purchase.
 * There seems to be a positive relationship between income and Number of web, catalog and store purchases. The more the income the more number of purchases. But there is a negative relationship between income and number of web visits per month. The more the income the lower the visits to the web page.
 
 ```{r}
 ##Scatter plots
 
-column_names_2 <- names(ds3)
-
+column_names_scatter_plot <- c("Year_Birth", "Education","Kidhome","Recency","MntWines","MntFruits","MntMeatProducts", "MntFishProducts", "MntSweetProducts", "MntGoldProds", "NumDealsPurchases","NumWebPurchases","NumCatalogPurchases","NumStorePurchases","NumWebVisitsMonth")
 scatter_plots_list <- list()
 
 # Iterate over each column and create a scatter using ggplot
-for (col in column_names_2) {
+for (col in column_names_scatter_plot) {
   p <- ggplot(ds3, aes(x = .data[[col]], y = Income)) +
     geom_point() +
-    labs(title = paste("Scatter plot of Income vs", col))
+    labs(title = col)
   
    scatter_plots_list[[col]] <- p
 }
-# Print scatter plots
-for (col in column_names_2) {
-  print(scatter_plots_list[[col]])
+
+num_plots_scatter <- length(column_names_scatter_plot)
+
+for (i in seq(1, num_plots_scatter, by = num_cols_per_page)) {
+  end <- min(i + num_cols_per_page - 1, num_plots_scatter)
+  plots_subset <- scatter_plots_list[i:end]
+  grid.arrange(grobs = plots_subset, ncol = num_cols_per_page)
 }
 ```
 
@@ -558,7 +569,7 @@ Then, the logistic regression after PCA model should be used to predict the acce
 
 # Customer segmentation
 
-Created some aggregated variables: 
+It was created some aggregated variables: 
 
 * ¨Variable “Age” after “Year_Birth”, 
 * ¨Variable “have_kids” combining “kidhome” and “teenhome”. 
@@ -605,26 +616,26 @@ summary(ds4)
 * Individuals that are older spend more than the younger ones.
 * Individuals with higher income spend more.
 ```{r}
-ggplot(ds4, aes(y= total_amount_spent, x= as.factor(have_kids), group = have_kids, fill = as.factor(have_kids)))+geom_boxplot() #no kids, more spent
-ggplot(ds4, aes(y= total_amount_spent, x= as.factor(Marital_Status), group = Marital_Status, fill = as.factor(Marital_Status)))+geom_boxplot() #no effect
-ggplot(ds4, aes(y= total_amount_spent, x= as.factor(Education), group = Education, fill = as.factor(Education)))+geom_boxplot()#Graduated and phd spent more than non graduate ones
-ggplot(ds4, aes(y= total_amount_spent, x= category_age, group = category_age, fill = category_age))+geom_boxplot()#The older the more they spent
-ggplot(ds4, aes(y= total_amount_spent, x= Income, group = Income, fill = Income))+geom_boxplot()#The higher the income the more they spent
+ggplot(ds4, aes(y= total_amount_spent, x= as.factor(have_kids), group = have_kids, fill = as.factor(have_kids)))+geom_boxplot()+labs(title ="Boxplot have kids") #no kids, more spent
+ggplot(ds4, aes(y= total_amount_spent, x= as.factor(Marital_Status), group = Marital_Status, fill = as.factor(Marital_Status)))+geom_boxplot()+labs(title ="Boxplot marital status") #no effect
+ggplot(ds4, aes(y= total_amount_spent, x= as.factor(Education), group = Education, fill = as.factor(Education)))+geom_boxplot()+labs(title ="Boxplot Education")#Graduated and phd spent more than non graduate ones
+ggplot(ds4, aes(y= total_amount_spent, x= category_age, group = category_age, fill = category_age))+geom_boxplot()+labs(title ="Boxplot age category")#The older the more they spent
+ggplot(ds4, aes(y= total_amount_spent, x= Income, group = Income, fill = Income))+geom_boxplot()+labs(title ="Boxplot income")#The higher the income the more they spent
 
 ```
 
-### Quantity of purchases vs demnographics
+### Quantity of purchases vs demographics
 
 * Individuals without kids purchased more times.
 * Individuals that are graduated or have masters+ purchased more times than individuals with basic education.
 * Individuals that are older purchased more times than the younger ones.
 * Individuals with higher income purchased more times.
 ```{r}
-ggplot(ds4, aes(y= quantity_of_purchases, x= as.factor(have_kids), group = have_kids, fill = as.factor(have_kids)))+geom_boxplot() #no kids, purchased more times.
-ggplot(ds4, aes(y= quantity_of_purchases, x= as.factor(Marital_Status), group = Marital_Status, fill = as.factor(Marital_Status)))+geom_boxplot() #no effect
-ggplot(ds4, aes(y= quantity_of_purchases, x= as.factor(Education), group = Education, fill = as.factor(Education)))+geom_boxplot()#Graduated and phd spent more than non graduate ones
-ggplot(ds4, aes(y= quantity_of_purchases, x= category_age, group = category_age, fill = category_age))+geom_boxplot()#The older the more times they purchase
-ggplot(ds4, aes(y= quantity_of_purchases, x= Income, group = Income, fill = Income))+geom_boxplot()#The higher the income the more times they purchase
+ggplot(ds4, aes(y= quantity_of_purchases, x= as.factor(have_kids), group = have_kids, fill = as.factor(have_kids)))+geom_boxplot()+labs(title ="Boxplot have kids") #no kids, purchased more times.
+ggplot(ds4, aes(y= quantity_of_purchases, x= as.factor(Marital_Status), group = Marital_Status, fill = as.factor(Marital_Status)))+geom_boxplot()+labs(title ="Boxplot Marital Status") #no effect
+ggplot(ds4, aes(y= quantity_of_purchases, x= as.factor(Education), group = Education, fill = as.factor(Education)))+geom_boxplot()+labs(title ="Boxplot Education")#Graduated and phd spent more than non graduate ones
+ggplot(ds4, aes(y= quantity_of_purchases, x= category_age, group = category_age, fill = category_age))+geom_boxplot()+labs(title ="Boxplot Age category")#The older the more times they purchase
+ggplot(ds4, aes(y= quantity_of_purchases, x= Income, group = Income, fill = Income))+geom_boxplot()+labs(title ="Boxplot Income")#The higher the income the more times they purchase
 
 ```
 
@@ -679,7 +690,7 @@ scale_x_discrete(labels=c("3" = "Low spenders", "1" = "Mid spenders", "2" = "Hig
 
 ### Cluster characterization
 
-Run the method k-means and decided for 3 clusters that are here characterized.
+It was run the method k-means and it was decided for 3 clusters that are here characterized.
 
 1. Cluster 3: "Low spenders" - This group has the lower income (~37k) and tend to have more than one kid, spend the least in all the categories and tend to chase deal purchases and visit the most often the website. Performed low quantities of purchases using normally the store or web but not really the Catalog.
 
@@ -690,7 +701,7 @@ Run the method k-means and decided for 3 clusters that are here characterized.
 
 ## Linear regression
 
-For the Linear Regression kept the same clusters and compared how much every Cluster spent in relation to the total amount spent. For the “Low Spenders” it was 15%, the “Mid Spenders” had 41% and the “High Spenders” spent 44%  of the overall expenditure. 
+For the Linear Regression, it was kept the same clusters and compared how much every Cluster spent in relation to the total amount spent. For the “Low Spenders” expenditure was 15%, the “Mid Spenders” had 41% and the “High Spenders” spent 44%  of the overall expenditure. 
 
 ```{r}
 clust_mid <- filter(ds4, ds4$kmean == 1)
@@ -723,7 +734,7 @@ model_clust_low_2 <-lm(total_amount_spent~Education+Income+have_kids+           
 summary(model_clust_low_2)
 ```
 
-### CLuster Mid Spenders
+### Cluster Mid Spenders
 
 For the “Mid Spenders” the number of catalog and store purchases are important as well as number of web visits per month. Kids produce a negative effect on the amount spent, while income has a positive effect. 
 
